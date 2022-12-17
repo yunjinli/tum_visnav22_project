@@ -4,7 +4,7 @@ CMakeLists.txt.user
 build
 thirdparty/build-*
 data/V1_01_easy/
-data/euro_data/
+data/euro_data/MH_*
 *.cereal
 .DS_Store
 *~
