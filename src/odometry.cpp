@@ -756,6 +756,9 @@ void load_data(const std::string& dataset_path, const std::string& calib_path) {
         std::cout << cam->name() << " ";
       }
       std::cout << std::endl;
+      std::cout << "The loaded imu bias data: \n";
+      std::cout << calib_cam.calib_accel_bias << "\n";
+      std::cout << calib_cam.calib_gyro_bias << "\n";
     } else {
       std::cerr << "could not load camera calibration " << calib_path
                 << std::endl;
