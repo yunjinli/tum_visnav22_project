@@ -90,6 +90,10 @@ struct Calibration {
 
   // Camera intrinsics
   std::vector<std::shared_ptr<AbstractCamera<double>>> intrinsics;
+
+  Eigen::Matrix<double, 9, 1> calib_accel_bias;
+
+  Eigen::Matrix<double, 12, 1> calib_gyro_bias;
 };
 
 }  // namespace visnav
