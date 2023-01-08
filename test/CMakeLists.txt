@@ -33,6 +33,8 @@ target_link_libraries(test_ex5 gtest gtest_main Ceres::ceres opengv TBB::tbb)
 add_executable(test_imu_dataloader src/test_imu_dataloader.cpp)
 target_link_libraries(test_imu_dataloader gtest gtest_main Ceres::ceres)
 
+add_executable(test_imu_preintegration src/test_imu_preintegration.cpp)
+target_link_libraries(test_imu_preintegration gtest gtest_main Ceres::ceres)
 
 
 gtest_discover_tests(test_ex0 DISCOVERY_TIMEOUT 120)
@@ -43,3 +45,4 @@ gtest_discover_tests(test_ex3 DISCOVERY_TIMEOUT 120)
 gtest_discover_tests(test_ex4 DISCOVERY_TIMEOUT 120)
 gtest_discover_tests(test_ex5 DISCOVERY_TIMEOUT 120)
 gtest_discover_tests(test_imu_dataloader DISCOVERY_TIMEOUT 120)
+gtest_discover_tests(test_imu_preintegration DISCOVERY_TIMEOUT 120)

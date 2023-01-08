@@ -152,39 +152,5 @@ struct ImuData {
     gyro.setZero();
   }
 };
-
-template <class Scalar>
-Eigen::Matrix<Scalar, 3, 1> getCalibratedGyro(
-    const Eigen::Matrix<Scalar, 3, 1>& raw,
-    const Eigen::Matrix<double, 12, 1> calib_gyro_bias) {
-  Eigen::Matrix<Scalar, 3, 1> gyro_bias;
-  Eigen::Matrix<Scalar, 3, 3> gyro_scale;
-
-  gyro_bias = calib_gyro_bias.template head<3>();
-  gyro_scale.col(0) = calib_gyro_bias.template segment<3>(3);
-  gyro_scale.col(1) = calib_gyro_bias.template segment<3>(6);
-  gyro_scale.col(2) = calib_gyro_bias.template segment<3>(9);
-
-  return (raw + gyro_scale * raw - gyro_bias);
-}
-
-template <class Scalar>
-Eigen::Matrix<Scalar, 3, 1> getCalibratedAccel(
-    const Eigen::Matrix<Scalar, 3, 1>& raw,
-    const Eigen::Matrix<double, 9, 1> calib_accel_bias) {
-  Eigen::Matrix<Scalar, 3, 1> accel_bias;
-  Eigen::Matrix<Scalar, 3, 3> accel_scale;
-
-  accel_bias = calib_accel_bias.template head<3>();
-
-  accel_scale.setZero();
-  accel_scale.col(0) = calib_accel_bias.template segment<3>(3);
-  accel_scale(1, 1) = calib_accel_bias(6);
-  accel_scale(2, 1) = calib_accel_bias(7);
-  accel_scale(2, 2) = calib_accel_bias(8);
-
-  return (raw + accel_scale * raw - accel_bias);
-}
-
 }  // namespace visnav
 #endif  // IMU_DATASET_H
