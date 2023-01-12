@@ -207,7 +207,9 @@ pangolin::Var<int> relative_pose_ransac_min_inliers("hidden.5pt_min_inlier", 16,
 
 pangolin::Var<bool> use_match_bow("hidden.use_match_bow", false, true);
 pangolin::Var<int> num_bow_candidates("hidden.num_bow_candidates", 25, 1, 100);
-
+pangolin::Var<int> rel_frame1("hidden.rel_frame1", 0, 0, 100);
+pangolin::Var<bool> compute_relative_pose("hidden.compute_relative_pose", false,
+                                          true);
 //////////////////////////////////////////////
 /// Track building options
 
@@ -462,6 +464,24 @@ int main(int argc, char** argv) {
       if (continue_next) {
         // stop if there is nothing left to do
         continue_next = next_step();
+        if (compute_relative_pose) {
+          FrameCamId fcid1(rel_frame1, 0);
+          FrameCamId fcid2(rel_frame1 + 1, 0);
+          std::cout << "Selected Timestamp1: " << timestamps[fcid1.frame_id]
+                    << std::endl;
+          std::cout << "Selected Timestamp2: " << timestamps[fcid2.frame_id]
+                    << std::endl;
+          Sophus::SE3d b1 = cameras[fcid1].T_w_c * calib_cam.T_i_c[0].inverse();
+          Sophus::SE3d b2 = cameras[fcid2].T_w_c * calib_cam.T_i_c[0].inverse();
+          Sophus::SE3d relpose = b1.inverse() * b2;
+          std::cout << relpose.rotationMatrix() << std::endl;
+          std::cout << relpose.translation() << std::endl;
+          Eigen::Matrix<double, 3, 1> omega =
+              relpose.rotationMatrix().eulerAngles(0, 1, 2);
+          std::cout << omega << std::endl;
+          compute_relative_pose = false;
+        }
+
       } else {
         // if the gui is just idling, make sure we don't burn too much CPU
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -469,6 +489,7 @@ int main(int argc, char** argv) {
     }
     // print summary before closing
     summary();
+
   } else {
     // non-gui mode: do all steps, then save map
     while (next_step()) {
@@ -888,40 +909,80 @@ void draw_scene() {
 // NUM_CAMS images)
 void load_data(const std::string& dataset_path, const std::string& calib_path,
                const int max_frames) {
-  const std::string timestams_path = dataset_path + "/timestamps.txt";
+  //  const std::string timestams_path = dataset_path + "/timestamps.txt";
+
+  //  {
+  //    std::ifstream times(timestams_path);
+
+  //    int64_t timestamp;
+
+  //    int id = 0;
+
+  //    while (times && (max_frames <= 0 || id < max_frames)) {
+  //      times >> timestamp;
+
+  //      // ensure that we actually read a new timestamp (and not e.g. just
+  //      newline
+  //      // at the end of the file)
+  //      if (times.fail()) {
+  //        times.clear();
+  //        std::string temp;
+  //        times >> temp;
+  //        if (temp.size() > 0) {
+  //          std::cerr << "Skipping '" << temp << "' while reading times."
+  //                    << std::endl;
+  //        }
+  //        continue;
+  //      }
+
+  //      timestamps.push_back(timestamp);
+
+  //      for (int i = 0; i < NUM_CAMS; i++) {
+  //        FrameCamId fcid(id, i);
+
+  //        std::stringstream ss;
+  //        //        ss << dataset_path << "/" << timestamp << "_" << i <<
+  //        ".jpg"; ss << dataset_path << "/cam" << i << "/data/" << timestamp
+  //        << ".jpg"; std::cout << ss.str() << std::endl; pangolin::TypedImage
+  //        img = pangolin::LoadImage(ss.str()); images[fcid] = std::move(img);
+  //      }
+
+  //      id++;
+  //    }
+
+  //    std::cerr << "Loaded " << id << " image pairs" << std::endl;
+  //  }
+  const std::string timestams_path = dataset_path + "/cam0/data.csv";
 
   {
     std::ifstream times(timestams_path);
 
-    int64_t timestamp;
-
     int id = 0;
 
-    while (times && (max_frames <= 0 || id < max_frames)) {
-      times >> timestamp;
+    while (times) {
+      std::string line;
+      std::getline(times, line);
 
-      // ensure that we actually read a new timestamp (and not e.g. just newline
-      // at the end of the file)
-      if (times.fail()) {
-        times.clear();
-        std::string temp;
-        times >> temp;
-        if (temp.size() > 0) {
-          std::cerr << "Skipping '" << temp << "' while reading times."
-                    << std::endl;
-        }
-        continue;
+      if (line.size() < 20 || line[0] == '#' || id > max_frames) continue;
+
+      {
+        std::string timestamp_str = line.substr(0, 19);
+        std::istringstream ss(timestamp_str);
+        Timestamp timestamp;
+        ss >> timestamp;
+        timestamps.push_back(timestamp);
       }
 
-      timestamps.push_back(timestamp);
+      std::string img_name = line.substr(20, line.size() - 21);
 
       for (int i = 0; i < NUM_CAMS; i++) {
         FrameCamId fcid(id, i);
 
         std::stringstream ss;
-        ss << dataset_path << "/" << timestamp << "_" << i << ".jpg";
+        ss << dataset_path << "/cam" << i << "/data/" << img_name;
         pangolin::TypedImage img = pangolin::LoadImage(ss.str());
         images[fcid] = std::move(img);
+        //        images[fcid] = ss.str();
       }
 
       id++;
@@ -929,7 +990,6 @@ void load_data(const std::string& dataset_path, const std::string& calib_path,
 
     std::cerr << "Loaded " << id << " image pairs" << std::endl;
   }
-
   {
     std::ifstream os(calib_path, std::ios::binary);
 

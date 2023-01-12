@@ -136,21 +136,21 @@ class DatasetIoFactory {
   }
 };
 
-template <class Scalar>
-struct ImuData {
-  using Ptr = std::shared_ptr<ImuData>;
-  using Vec3 = Eigen::Matrix<Scalar, 3, 1>;
+// template <class Scalar>
+// struct ImuData {
+//  using Ptr = std::shared_ptr<ImuData>;
+//  using Vec3 = Eigen::Matrix<Scalar, 3, 1>;
 
-  Timestamp t_ns;  // Timestamp in nanoseconds
-  Vec3 accel;
-  Vec3 gyro;
+//  Timestamp t_ns;  // Timestamp in nanoseconds
+//  Vec3 accel;
+//  Vec3 gyro;
 
-  // Constructor
-  ImuData() {
-    t_ns = 0;
-    accel.setZero();
-    gyro.setZero();
-  }
-};
+//  // Constructor
+//  ImuData() {
+//    t_ns = 0;
+//    accel.setZero();
+//    gyro.setZero();
+//  }
+//};
 }  // namespace visnav
 #endif  // IMU_DATASET_H

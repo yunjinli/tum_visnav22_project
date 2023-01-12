@@ -182,7 +182,7 @@ pangolin::Var<double> match_max_dist_2d("hidden.match_max_dist_2d", 20.0, 1.0,
 
 pangolin::Var<int> new_kf_min_inliers("hidden.new_kf_min_inliers", 80, 1, 200);
 
-pangolin::Var<int> max_num_kfs("hidden.max_num_kfs", 10, 5, 20);
+pangolin::Var<int> max_num_kfs("hidden.max_num_kfs", 10, 1, 20);
 
 pangolin::Var<double> cam_z_threshold("hidden.cam_z_threshold", 0.1, 1.0, 0.0);
 
@@ -906,6 +906,37 @@ bool next_step() {
       calib_cam = calib_cam_opt;
 
       opt_finished = false;
+
+      // ======================TEST============================
+      std::vector<std::pair<FrameCamId, Camera>> cameras_vector;
+      if (cameras.size() == 10) {
+        for (auto kv : cameras) {
+          if (kv.first.cam_id == 0) {
+            cameras_vector.push_back(std::make_pair(kv.first, kv.second));
+          }
+        }
+        std::cout << "Selected Timestamp1: "
+                  << timestamps[cameras_vector[cameras_vector.size() - 2]
+                                    .first.frame_id]
+                  << std::endl;
+        std::cout << "Selected Timestamp2: "
+                  << timestamps[cameras_vector[cameras_vector.size() - 1]
+                                    .first.frame_id]
+                  << std::endl;
+        Sophus::SE3d b1 =
+            cameras_vector[cameras_vector.size() - 2].second.T_w_c *
+            calib_cam.T_i_c[0].inverse();
+        Sophus::SE3d b2 =
+            cameras_vector[cameras_vector.size() - 1].second.T_w_c *
+            calib_cam.T_i_c[0].inverse();
+        Sophus::SE3d relpose = b1.inverse() * b2;
+        std::cout << relpose.rotationMatrix() << std::endl;
+        std::cout << relpose.translation() << std::endl;
+        Eigen::Matrix<double, 3, 1> omega =
+            relpose.rotationMatrix().eulerAngles(0, 1, 2);
+        std::cout << omega << std::endl;
+      }
+      // ======================TEST============================
     }
 
     // update image views

@@ -90,6 +90,18 @@ struct Calibration {
 
   // Camera intrinsics
   std::vector<std::shared_ptr<AbstractCamera<double>>> intrinsics;
+
+  Eigen::Matrix<double, 9, 1> calib_accel_bias;
+
+  Eigen::Matrix<double, 12, 1> calib_gyro_bias;
+
+  /// @brief IMU update rate.
+  double imu_update_rate;
+
+  /// @brief Continuous time gyroscope noise standard deviation.
+  Eigen::Matrix<double, 3, 1> gyro_noise_std;
+  /// @brief Continuous time accelerometer noise standard deviation.
+  Eigen::Matrix<double, 3, 1> accel_noise_std;
 };
 
 }  // namespace visnav

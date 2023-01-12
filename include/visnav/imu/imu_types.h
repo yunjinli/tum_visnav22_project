@@ -43,6 +43,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace visnav {
 
+namespace constants {
+static const Eigen::Vector3d g(0, 0, -9.81);
+static const Eigen::Vector3d g_dir(0, 0, -1);
+}  // namespace constants
+
 constexpr size_t POSE_SIZE = 6;  ///< Dimentionality of the pose state
 constexpr size_t POSE_VEL_SIZE =
     9;  ///< Dimentionality of the pose-velocity state
@@ -280,4 +285,4 @@ struct ImuData {
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
 
-}  // namespace basalt
+}  // namespace visnav
