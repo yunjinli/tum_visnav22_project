@@ -40,7 +40,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace visnav::constants {
 static const Eigen::Vector3d G(0, 0, -9.81);
-}  // namespace basalt::constants
+}  // namespace visnav::constants
 
 static const double ACCEL_STD_DEV = 0.23;
 static const double GYRO_STD_DEV = 0.0027;

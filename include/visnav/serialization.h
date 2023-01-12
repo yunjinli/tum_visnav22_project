@@ -165,7 +165,10 @@ void serialize(Archive& ar, Sophus::SE3d& p) {
 
 template <class Archive>
 void serialize(Archive& ar, Calibration& cam) {
-  ar(CEREAL_NVP(cam.T_i_c), CEREAL_NVP(cam.intrinsics));
+  ar(CEREAL_NVP(cam.T_i_c), CEREAL_NVP(cam.intrinsics),
+     CEREAL_NVP(cam.calib_accel_bias), CEREAL_NVP(cam.calib_gyro_bias),
+     cam.imu_update_rate, CEREAL_NVP(cam.accel_noise_std),
+     CEREAL_NVP(cam.gyro_noise_std));
 }
 
 template <class Archive, class Scalar, class CamT>
