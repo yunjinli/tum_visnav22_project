@@ -105,4 +105,45 @@ struct BundleAdjustmentReprojectionCostFunctor {
   std::string cam_model;
 };
 
+// Make the cost functor for the IMU
+struct BundleAdjustmentImuCostFunctor {
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+  BundleAdjustmentImuCostFunctor(
+      const visnav::IntegratedImuMeasurement<double>& imu_meas)
+      : imu_meas(imu_meas) {}
+
+  template <class T>
+  bool operator()(T const* const g, T const* const state0_T_w_i,
+                  T const* const state0_v_w_i, T const* const state0_t_ns,
+                  T const* const state1_T_w_i, T const* const state1_v_w_i,
+                  T const* const state1_t_ns, T const* const bg,
+                  T const* const ba, T* sResiduals) const {
+    // Map inputs
+    Eigen::Map<T const> const g(g);
+    Eigen::Map<Sophus::SE3<T> const> const state0_T_w_i(state0_T_w_i);
+    Eigen::Map<Eigen::Matrix<T, 3, 1> const> const state0_v_w_i(state0_v_w_i);
+    T const state0_t_ns(state0_t_ns);
+    Eigen::Map<Sophus::SE3<T> const> const state1_T_w_i(state1_T_w_i);
+    Eigen::Map<Eigen::Matrix<T, 3, 1> const> const state1_v_w_i(state1_v_w_i);
+    T const state1_t_ns(state1_t_ns);
+    Eigen::Map<Eigen::Matrix<T, 3, 1> const> bg;
+    Eigen::Map<Eigen::Matrix<T, 3, 1> const> ba;
+    Eigen::Map<visnav::PoseVelState<T>::VecN> residuals(sResiduals);
+
+    // Rebuild the state variables
+    visnav::PoseVelState<T> state0;
+    state0.T_w_i = state0_T_w_i;
+    state0.vel_w_i = state0_v_w_i;
+    state0.t_ns = state0_t_ns;
+    visnav::PoseVelState<T> state1;
+    state1.T_w_i = state1_T_w_i;
+    state1.vel_w_i = state1_v_w_i;
+    state1.t_ns = state1_t_ns;
+
+    // Compute the residuals
+    residuals = imu_meas.residual(state0, g, state1, bg, ba);
+    return true;
+  }
+  visnav::IntegratedImuMeasurement<double> imu_meas;
+};
 }  // namespace visnav

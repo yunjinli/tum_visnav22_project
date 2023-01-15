@@ -49,6 +49,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <visnav/reprojection.h>
 #include <visnav/local_parameterization_se3.hpp>
+#include <visnav/imu/preintegration.h>
 
 #include <visnav/tracks.h>
 
@@ -335,11 +336,11 @@ struct BundleAdjustmentOptions {
 };
 
 // Run bundle adjustment to optimize cameras, points, and optionally intrinsics
-void bundle_adjustment(const Corners& feature_corners,
-                       const BundleAdjustmentOptions& options,
-                       const std::set<FrameCamId>& fixed_cameras,
-                       Calibration& calib_cam, Cameras& cameras,
-                       Landmarks& landmarks) {
+void bundle_adjustment(
+    const Corners& feature_corners, const BundleAdjustmentOptions& options,
+    const std::set<FrameCamId>& fixed_cameras, Calibration& calib_cam,
+    Cameras& cameras, Landmarks& landmarks,
+    const std::vector<IntegratedImuMeasurement<double>>& imu_measurements) {
   ceres::Problem problem;
 
   // TODO SHEET 4: Setup optimization problem
@@ -394,6 +395,42 @@ void bundle_adjustment(const Corners& feature_corners,
       }
     }
   }
+
+  // Iterate over all the active keyframes and normal frames
+  for (auto& imu_meas : imu_measurements) {
+    visnav::PoseVelState<double> state0;  // to be replaced
+    visnav::PoseVelState<double> state1;  // to be replaced
+    Eigen::Matrix<double, 3, 1> bg;       // to be replaced
+    Eigen::Matrix<double, 3, 1> ba;       // to be replaced
+
+    BundleAdjustmentImuCostFunctor* imu_c =
+        new BundleAdjustmentImuCostFunctor(imu_meas);
+    ceres::CostFunction* imu_cost_function =
+        new ceres::AutoDiffCostFunction<BundleAdjustmentImuCostFunctor, 2, 1,
+                                        Sophus::SE3d::num_parameters,
+                                        Sophus::SE3d::num_parameters, 3, 3>(
+            imu_c);
+
+    if (options.use_huber) {
+      problem.AddResidualBlock(imu_cost_function,
+                               new ceres::HuberLoss(options.huber_parameter),
+                               // visnav::constants::g.data(),
+                               state0.T_w_i.data(), state0.vel_w_i.data(),
+                               // state0.t_ns,
+                               state1.T_w_i.data(), state1.vel_w_i.data(),
+                               // state1.t_ns,
+                               bg.data(), ba.data());
+    } else {
+      problem.AddResidualBlock(imu_cost_function, NULL,
+                               // visnav::constants::g,
+                               state0.T_w_i.data(), state0.vel_w_i.data(),
+                               // state0.t_ns,
+                               state1.T_w_i.data(), state1.vel_w_i.data(),
+                               // state1.t_ns,
+                               bg.data(), ba.data());
+    }
+  }
+
   if (!options.optimize_intrinsics) {
     // Keep the intrinsics fixed
     problem.SetParameterBlockConstant(calib_cam.intrinsics[0]->data());
