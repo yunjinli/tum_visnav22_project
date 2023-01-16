@@ -109,25 +109,21 @@ struct BundleAdjustmentReprojectionCostFunctor {
 struct BundleAdjustmentImuCostFunctor {
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
   BundleAdjustmentImuCostFunctor(
+      const Sophus::SE3d& state0_T_w_i,
+      const Sophus::SE3d& state1_T_w_i,
+      const Eigen::Vector3d& state0_v_w_i,
+      const Eigen::Vector3d& state1_v_w_i,
       const visnav::IntegratedImuMeasurement<double>& imu_meas)
-      : imu_meas(imu_meas) {}
+      : state0_T_w_i(state0_T_w_i), state1_T_w_i(state1_T_w_i), state0_v_w_i(state0_v_w_i), state1_v_w_i(state1_v_w_i), imu_meas(imu_meas){}
 
   template <class T>
-  bool operator()(T const* const g, T const* const state0_T_w_i,
-                  T const* const state0_v_w_i, T const* const state0_t_ns,
-                  T const* const state1_T_w_i, T const* const state1_v_w_i,
-                  T const* const state1_t_ns, T const* const bg,
-                  T const* const ba, T* sResiduals) const {
+  bool operator()(T const* const sg,
+                  T const* const sstate0_t_ns, T const* const sstate1_t_ns,
+                  T* sResiduals) const {
     // Map inputs
-    Eigen::Map<T const> const g(g);
-    Eigen::Map<Sophus::SE3<T> const> const state0_T_w_i(state0_T_w_i);
-    Eigen::Map<Eigen::Matrix<T, 3, 1> const> const state0_v_w_i(state0_v_w_i);
-    T const state0_t_ns(state0_t_ns);
-    Eigen::Map<Sophus::SE3<T> const> const state1_T_w_i(state1_T_w_i);
-    Eigen::Map<Eigen::Matrix<T, 3, 1> const> const state1_v_w_i(state1_v_w_i);
-    T const state1_t_ns(state1_t_ns);
-    Eigen::Map<Eigen::Matrix<T, 3, 1> const> bg;
-    Eigen::Map<Eigen::Matrix<T, 3, 1> const> ba;
+    Eigen::Map<T const> const g(sg);
+    Eigen::Map<T const> const state0_t_ns(sstate0_t_ns);
+    Eigen::Map<T const> const state1_t_ns(sstate1_t_ns);
     Eigen::Map<visnav::PoseVelState<T>::VecN> residuals(sResiduals);
 
     // Rebuild the state variables
@@ -139,11 +135,17 @@ struct BundleAdjustmentImuCostFunctor {
     state1.T_w_i = state1_T_w_i;
     state1.vel_w_i = state1_v_w_i;
     state1.t_ns = state1_t_ns;
+    Eigen::Matrix<T, 3, 1> bias;
+    bias < T(0), T(0), T(0);
 
     // Compute the residuals
-    residuals = imu_meas.residual(state0, g, state1, bg, ba);
+    residuals = imu_meas.residual(state0, g, state1, bias, bias);
     return true;
   }
+  Sophus::SE3d state0_T_w_i;
+  Sophus::SE3d state1_T_w_i;
+  Eigen::Vector3d state0_v_w_i;
+  Eigen::Vector3d state1_v_w_i;
   visnav::IntegratedImuMeasurement<double> imu_meas;
 };
 }  // namespace visnav
