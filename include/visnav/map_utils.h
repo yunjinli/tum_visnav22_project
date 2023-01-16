@@ -406,27 +406,39 @@ void bundle_adjustment(
     BundleAdjustmentImuCostFunctor* imu_c =
         new BundleAdjustmentImuCostFunctor(imu_meas);
     ceres::CostFunction* imu_cost_function =
-        new ceres::AutoDiffCostFunction<BundleAdjustmentImuCostFunctor, 2, 1,
+        new ceres::AutoDiffCostFunction<BundleAdjustmentImuCostFunctor, 2,
+                                        1,
                                         Sophus::SE3d::num_parameters,
-                                        Sophus::SE3d::num_parameters, 3, 3>(
+                                        3,
+                                        1,
+                                        Sophus::SE3d::num_parameters, 
+                                        3,
+                                        1, 
+                                        3, 3>(
             imu_c);
 
+    // This is very ugly, but might work
+    double state0_t_ns = (double)state0.t_ns;
+    double* state0_t_ns_ptr = &state0_t_ns;
+    double state1_t_ns = (double)state1.t_ns;
+    double* state1_t_ns_ptr = &state1_t_ns;
+    Eigen::Matrix<double, 3, 1> g = visnav::constants::g;
     if (options.use_huber) {
       problem.AddResidualBlock(imu_cost_function,
                                new ceres::HuberLoss(options.huber_parameter),
-                               // visnav::constants::g.data(),
+                               g.data(),
                                state0.T_w_i.data(), state0.vel_w_i.data(),
-                               // state0.t_ns,
+                               state0_t_ns_ptr,
                                state1.T_w_i.data(), state1.vel_w_i.data(),
-                               // state1.t_ns,
+                               state1_t_ns_ptr,
                                bg.data(), ba.data());
     } else {
       problem.AddResidualBlock(imu_cost_function, NULL,
-                               // visnav::constants::g,
+                               g.data(),
                                state0.T_w_i.data(), state0.vel_w_i.data(),
-                               // state0.t_ns,
+                               state0_t_ns_ptr,
                                state1.T_w_i.data(), state1.vel_w_i.data(),
-                               // state1.t_ns,
+                               state1_t_ns_ptr,
                                bg.data(), ba.data());
     }
   }
