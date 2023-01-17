@@ -1103,11 +1103,12 @@ void optimize() {
   opt_thread.reset(new std::thread([fid, ba_options] {
     std::set<FrameCamId> fixed_cameras = {{fid, 0}, {fid, 1}};
 
-    std::vector<visnav::PoseVelState<double>> states;  // placeholder: expected length is three
-    std::vector<visnav::IntegratedImuMeasurement<double>> imu_measurements; // placeholder: expected length is two
+    std::vector<visnav::PoseVelState<double>>
+        states;  // placeholder: expected length is three
+    std::vector<visnav::IntegratedImuMeasurement<double>>
+        imu_measurements;  // placeholder: expected length is two
     bundle_adjustment(feature_corners, ba_options, fixed_cameras, calib_cam_opt,
                       cameras_opt, landmarks_opt, frame_states_opt, imu_meas);
-                      cameras_opt, landmarks_opt, states, imu_measurements);
 
     opt_finished = true;
     opt_running = false;
