@@ -340,8 +340,9 @@ void bundle_adjustment(
     const Corners& feature_corners, const BundleAdjustmentOptions& options,
     const std::set<FrameCamId>& fixed_cameras, Calibration& calib_cam,
     Cameras& cameras, Landmarks& landmarks,
-    const std::vector<PoseVelState<double>>& states,
-    const std::vector<IntegratedImuMeasurement<double>>& imu_measurements) {
+    Eigen::aligned_map<Timestamp, PoseVelState<double>>& states,
+    Eigen::aligned_map<Timestamp, IntegratedImuMeasurement<double>>&
+        imu_measurements) {
   ceres::Problem problem;
 
   // TODO SHEET 4: Setup optimization problem
@@ -397,46 +398,44 @@ void bundle_adjustment(
     }
   }
 
-  // Build parameter blocks for frame optimization
-  for (size_t i=0; i<2; i++){
-    Eigen::Vector3d mock_vector;
-    problem.AddParameterBlock(mock_vector.data(),
-                              Sophus::SE3d::num_parameters,
-                              new Sophus::test::LocalParameterizationSE3);
-  }
-
   // Build the two residuals for the frames
-  for (size_t i=0; i<2; i++) {
-    const visnav::IntegratedImuMeasurement<double> imu_meas = imu_measurements[i];
-    visnav::PoseVelState<double> state0 = states[i];
-    visnav::PoseVelState<double> state1 = states[i+1];
+  int iter_counter = 0;
+  auto iter = states.rbegin();
 
-    BundleAdjustmentImuCostFunctor* imu_c =
-        new BundleAdjustmentImuCostFunctor(state0.T_w_i, state1.T_w_i, state0.vel_w_i, state1.vel_w_i, imu_meas);
-    ceres::CostFunction* imu_cost_function =
-        new ceres::AutoDiffCostFunction<BundleAdjustmentImuCostFunctor, 2,
-                                        1, // visnav::constant::g
-                                        1, // state0.t_ns
-                                        1, // state1.t_ns
-                                        >(imu_c);
+  while (iter_counter < 3) {
+    const visnav::IntegratedImuMeasurement<double>& imu_meas =
+        imu_measurements[iter->first];
+    visnav::PoseVelState<double>& state1 = states[iter->first];
+    ++iter;
+    visnav::PoseVelState<double>& state0 = states[iter->first];
 
-    // This is very ugly, but might work
-    double state0_t_ns = (double)state0.t_ns;
-    double* state0_t_ns_ptr = &state0_t_ns;
-    double state1_t_ns = (double)state1.t_ns;
-    double* state1_t_ns_ptr = &state1_t_ns;
+    // Build parameter blocks for frame optimization
+    problem.AddParameterBlock(state0.T_w_i.data(), Sophus::SE3d::num_parameters,
+                              new Sophus::test::LocalParameterizationSE3);
+    problem.AddParameterBlock(state1.T_w_i.data(), Sophus::SE3d::num_parameters,
+                              new Sophus::test::LocalParameterizationSE3);
+    // might have to add state[1] twice, because it appears in two residuals
+
+    BundleAdjustmentImuCostFunctor* imu_c = new BundleAdjustmentImuCostFunctor(
+        imu_meas, visnav::constants::g, state0.t_ns, state1.t_ns);
+    ceres::CostFunction* imu_cost_function = new ceres::AutoDiffCostFunction<
+        BundleAdjustmentImuCostFunctor, 9,
+        Sophus::SE3d::num_parameters,  // state0.T_w_i
+        Sophus::SE3d::num_parameters,  // state1.T_w_i
+        3,                             // state0.vel_w_i
+        3,                             // state1.vel_w_i
+        >(imu_c);
+
     Eigen::Matrix<double, 3, 1> g = visnav::constants::g;
     if (options.use_huber) {
       problem.AddResidualBlock(imu_cost_function,
                                new ceres::HuberLoss(options.huber_parameter),
-                               g.data(),
-                               state0_t_ns_ptr,
-                               state1_t_ns_ptr);
+                               state0.T_w_i.data(), state1.T_w_i.data(),
+                               state0.vel_w_i.data(), state1.vel_w_i.data());
     } else {
-      problem.AddResidualBlock(imu_cost_function, NULL,
-                               g.data(),
-                               state0_t_ns_ptr,
-                               state1_t_ns_ptr);
+      problem.AddResidualBlock(imu_cost_function, NULL, state0.T_w_i.data(),
+                               state1.T_w_i.data(), state0.vel_w_i.data(),
+                               state1.vel_w_i.data());
     }
   }
 

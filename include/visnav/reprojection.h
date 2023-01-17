@@ -109,21 +109,24 @@ struct BundleAdjustmentReprojectionCostFunctor {
 struct BundleAdjustmentImuCostFunctor {
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
   BundleAdjustmentImuCostFunctor(
-      const Sophus::SE3d& state0_T_w_i,
-      const Sophus::SE3d& state1_T_w_i,
-      const Eigen::Vector3d& state0_v_w_i,
-      const Eigen::Vector3d& state1_v_w_i,
-      const visnav::IntegratedImuMeasurement<double>& imu_meas)
-      : state0_T_w_i(state0_T_w_i), state1_T_w_i(state1_T_w_i), state0_v_w_i(state0_v_w_i), state1_v_w_i(state1_v_w_i), imu_meas(imu_meas){}
+      const visnav::IntegratedImuMeasurement<double>& imu_meas,
+      const Eigen::Vector3d& g, const visnav::Timestamp& state0_t_ns,
+      const visnav::Timestamp&
+          state1_t_ns)  // might have to use int_64t if this breaks
+      : imu_meas(imu_meas),
+        g(g),
+        state0_t_ns(state0_t_ns),
+        state1_t_ns(state1_t_ns) {}
 
   template <class T>
-  bool operator()(T const* const sg,
-                  T const* const sstate0_t_ns, T const* const sstate1_t_ns,
+  bool operator()(T const* const sstate0_T_w_i, T const* const sstate1_T_w_i,
+                  T const* const sstate0_v_w_i, T const* const sstate1_v_w_i,
                   T* sResiduals) const {
     // Map inputs
-    Eigen::Map<T const> const g(sg);
-    Eigen::Map<T const> const state0_t_ns(sstate0_t_ns);
-    Eigen::Map<T const> const state1_t_ns(sstate1_t_ns);
+    Eigen::Map<Sophus::SE3<T> const> const state0_T_w_i(sstate0_T_w_i);
+    Eigen::Map<Sophus::SE3<T> const> const state1_T_w_i(sstate1_T_w_i);
+    Eigen::Map<Eigen::Matrix<T, 3, 1>> const state0_v_w_i(sstate0_v_w_i);
+    Eigen::Map<Eigen::Matrix<T, 3, 1>> const state1_v_w_i(sstate1_v_w_i);
     Eigen::Map<visnav::PoseVelState<T>::VecN> residuals(sResiduals);
 
     // Rebuild the state variables
@@ -142,10 +145,9 @@ struct BundleAdjustmentImuCostFunctor {
     residuals = imu_meas.residual(state0, g, state1, bias, bias);
     return true;
   }
-  Sophus::SE3d state0_T_w_i;
-  Sophus::SE3d state1_T_w_i;
-  Eigen::Vector3d state0_v_w_i;
-  Eigen::Vector3d state1_v_w_i;
+  int64_t state0_t_ns;
+  int64_t state1_t_ns;
+  Eigen::Vector3d g;
   visnav::IntegratedImuMeasurement<double> imu_meas;
 };
 }  // namespace visnav
