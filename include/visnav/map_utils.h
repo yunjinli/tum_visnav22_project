@@ -398,44 +398,59 @@ void bundle_adjustment(
     }
   }
 
-  // Build the two residuals for the frames
-  int iter_counter = 0;
-  auto iter = states.rbegin();
+  // Add the parameter block first
+  if (states.size() == 3) {
+    for (auto& state : states) {
+      problem.AddParameterBlock(state.second.T_w_i.data(),
+                                Sophus::SE3d::num_parameters,
+                                new Sophus::test::LocalParameterizationSE3);
+    }
+    // Build the two residuals for the frames
+    int iter_counter = 0;
+    auto iter = states.rbegin();
 
-  while (iter_counter < 3) {
-    const visnav::IntegratedImuMeasurement<double>& imu_meas =
-        imu_measurements[iter->first];
-    visnav::PoseVelState<double>& state1 = states[iter->first];
-    ++iter;
-    visnav::PoseVelState<double>& state0 = states[iter->first];
+    while (iter_counter < 3) {
+      const IntegratedImuMeasurement<double>& imu_meas =
+          imu_measurements[iter->first];
+      visnav::PoseVelState<double>& state1 = states[iter->first];
+      ++iter;
+      visnav::PoseVelState<double>& state0 = states[iter->first];
 
-    // Build parameter blocks for frame optimization
-    problem.AddParameterBlock(state0.T_w_i.data(), Sophus::SE3d::num_parameters,
-                              new Sophus::test::LocalParameterizationSE3);
-    problem.AddParameterBlock(state1.T_w_i.data(), Sophus::SE3d::num_parameters,
-                              new Sophus::test::LocalParameterizationSE3);
-    // might have to add state[1] twice, because it appears in two residuals
+      // Build parameter blocks for frame optimization
+      //    problem.AddParameterBlock(state0.T_w_i.data(),
+      //    Sophus::SE3d::num_parameters,
+      //                              new
+      //                              Sophus::test::LocalParameterizationSE3);
+      //    problem.AddParameterBlock(state1.T_w_i.data(),
+      //    Sophus::SE3d::num_parameters,
+      //                              new
+      //                              Sophus::test::LocalParameterizationSE3);
+      // might have to add state[1] twice, because it appears in two residuals
 
-    BundleAdjustmentImuCostFunctor* imu_c = new BundleAdjustmentImuCostFunctor(
-        imu_meas, visnav::constants::g, state0.t_ns, state1.t_ns);
-    ceres::CostFunction* imu_cost_function = new ceres::AutoDiffCostFunction<
-        BundleAdjustmentImuCostFunctor, 9,
-        Sophus::SE3d::num_parameters,  // state0.T_w_i
-        Sophus::SE3d::num_parameters,  // state1.T_w_i
-        3,                             // state0.vel_w_i
-        3,                             // state1.vel_w_i
-        >(imu_c);
+      BundleAdjustmentImuCostFunctor* imu_c =
+          new BundleAdjustmentImuCostFunctor(imu_meas.getDeltaState(),
+                                             visnav::constants::g, state0.t_ns,
+                                             state1.t_ns);
+      ceres::CostFunction* imu_cost_function = new ceres::AutoDiffCostFunction<
+          BundleAdjustmentImuCostFunctor, 9,
+          Sophus::SE3d::num_parameters,  // state0.T_w_i
+          Sophus::SE3d::num_parameters,  // state1.T_w_i
+          3,                             // state0.vel_w_i
+          3                              // state1.vel_w_i
+          >(imu_c);
 
-    Eigen::Matrix<double, 3, 1> g = visnav::constants::g;
-    if (options.use_huber) {
-      problem.AddResidualBlock(imu_cost_function,
-                               new ceres::HuberLoss(options.huber_parameter),
-                               state0.T_w_i.data(), state1.T_w_i.data(),
-                               state0.vel_w_i.data(), state1.vel_w_i.data());
-    } else {
-      problem.AddResidualBlock(imu_cost_function, NULL, state0.T_w_i.data(),
-                               state1.T_w_i.data(), state0.vel_w_i.data(),
-                               state1.vel_w_i.data());
+      Eigen::Matrix<double, 3, 1> g = visnav::constants::g;
+      if (options.use_huber) {
+        problem.AddResidualBlock(imu_cost_function,
+                                 new ceres::HuberLoss(options.huber_parameter),
+                                 state0.T_w_i.data(), state1.T_w_i.data(),
+                                 state0.vel_w_i.data(), state1.vel_w_i.data());
+      } else {
+        problem.AddResidualBlock(imu_cost_function, NULL, state0.T_w_i.data(),
+                                 state1.T_w_i.data(), state0.vel_w_i.data(),
+                                 state1.vel_w_i.data());
+      }
+      iter_counter++;
     }
   }
 
