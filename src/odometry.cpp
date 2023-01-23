@@ -759,15 +759,8 @@ void draw_scene() {
 
   if (show_gt) pangolin::glDrawLineStrip(gt_t_w_i);
 
-  if (show_vio_pt) {
-    vio_t_w_i.clear();
-    for (const auto& kv : frame_states) {
-      vio_t_w_i.push_back(kv.second.T_w_i.translation());
-    }
-    pangolin::glDrawLineStrip(vio_t_w_i);
-  }
+  if (show_vio_pt) pangolin::glDrawLineStrip(vio_t_w_i);
 }
-
 // Load images, calibration, and features / matches if available
 void load_data(const std::string& dataset_path, const std::string& calib_path) {
   const std::string timestams_path = dataset_path + "/cam0/data.csv";
@@ -1084,8 +1077,8 @@ bool next_step() {
       //          }
       //        }
 
-      //        double error = alignSVD(vio_t_ns, vio_t_w_i, gt_t_ns, gt_t_w_i);
-      //        errors.push_back(error);
+      //        double error = alignSVD(vio_t_ns, vio_t_w_i, gt_t_ns,
+      //        gt_t_w_i); errors.push_back(error);
       //        // Calculate the avg. errors so far
       //        double acc = 0;
       //        for (size_t i = 0; i < errors.size(); i++) {
@@ -1168,9 +1161,9 @@ void optimize() {
             << landmarks.size() << " points and " << num_obs << " observations."
             << std::endl;
 
-  // Fix oldest two cameras to fix SE3 and scale gauge. Making the whole second
-  // camera constant is a bit suboptimal, since we only need 1 DoF, but it's
-  // simple and the initial poses should be good from calibration.
+  // Fix oldest two cameras to fix SE3 and scale gauge. Making the whole
+  // second camera constant is a bit suboptimal, since we only need 1 DoF, but
+  // it's simple and the initial poses should be good from calibration.
   FrameId fid = *(kf_frames.begin());
   // std::cout << "fid " << fid << std::endl;
 
