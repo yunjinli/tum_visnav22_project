@@ -68,6 +68,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "../include/visnav/imu/utils/calib_bias.hpp"
 #include <visnav/imu_dataset.h>
 #include "../include/visnav/imu/imu_types.h"
+#include <visnav/imu/utils/assert.h>
 using namespace visnav;
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -92,6 +93,14 @@ void update_frame_states_from_opt(
 void get_frame_states_opt(
     Eigen::aligned_map<Timestamp, PoseVelState<double>>& frame_states,
     Eigen::aligned_map<Timestamp, PoseVelState<double>>& frame_states_opt);
+double alignSVD(
+    const std::vector<int64_t>& filter_t_ns,
+    const std::vector<Eigen::Vector3d,
+                      Eigen::aligned_allocator<Eigen::Vector3d>>& filter_t_w_i,
+    const std::vector<int64_t>& gt_t_ns,
+    std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>&
+        gt_t_w_i);
+void align_svd();
 ///////////////////////////////////////////////////////////////////////////////
 /// Constants
 ///////////////////////////////////////////////////////////////////////////////
@@ -169,7 +178,15 @@ Timestamp last_state_t_ns;
 using Vec3 = Eigen::Matrix<double, 3, 1>;
 IntegratedImuMeasurement<double>::Ptr imu_mea;
 ImuData<double>::Ptr data;
+bool use_imu = true;
 
+std::vector<Timestamp> gt_t_ns;
+std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>
+    gt_t_w_i;
+std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>
+    vio_t_w_i;
+std::vector<Timestamp> vio_t_ns;
+std::vector<double> errors;
 ///////////////////////////////////////////////////////////////////////////////
 /// GUI parameters
 ///////////////////////////////////////////////////////////////////////////////
@@ -199,6 +216,8 @@ pangolin::Var<bool> show_epipolar("hidden.show_epipolar", false, true);
 pangolin::Var<bool> show_cameras3d("hidden.show_cameras", true, true);
 pangolin::Var<bool> show_points3d("hidden.show_points", true, true);
 pangolin::Var<bool> show_old_points3d("hidden.show_old_points3d", true, true);
+pangolin::Var<bool> show_gt("hidden.show_gt", false, true);
+pangolin::Var<bool> show_vio_pt("hidden.show_vio_pt", false, true);
 
 //////////////////////////////////////////////
 /// Feature extraction and matching options
@@ -245,6 +264,7 @@ pangolin::Var<bool> continue_next("ui.continue_next", false, true);
 using Button = pangolin::Var<std::function<void(void)>>;
 
 Button next_step_btn("ui.next_step", &next_step);
+Button alignSVD_btn("ui.align_svd", &align_svd);
 
 ///////////////////////////////////////////////////////////////////////////////
 /// GUI and Boilerplate Implementation
@@ -256,7 +276,6 @@ int main(int argc, char** argv) {
   bool show_gui = true;
   std::string dataset_path = "data/V1_01_easy/mav0";
   std::string cam_calib = "opt_calib.json";
-
   CLI::App app{"Visual odometry."};
 
   app.add_option("--show-gui", show_gui, "Show GUI");
@@ -264,7 +283,7 @@ int main(int argc, char** argv) {
                  "Dataset path. Default: " + dataset_path);
   app.add_option("--cam-calib", cam_calib,
                  "Path to camera calibration. Default: " + cam_calib);
-
+  app.add_option("--use-imu", use_imu, "Use IMU");
   try {
     app.parse(argc, argv);
   } catch (const CLI::ParseError& e) {
@@ -401,6 +420,7 @@ int main(int argc, char** argv) {
     while (next_step()) {
       // nop
     }
+    align_svd();
   }
 
   return 0;
@@ -736,6 +756,16 @@ void draw_scene() {
     }
     glEnd();
   }
+
+  if (show_gt) pangolin::glDrawLineStrip(gt_t_w_i);
+
+  if (show_vio_pt) {
+    vio_t_w_i.clear();
+    for (const auto& kv : frame_states) {
+      vio_t_w_i.push_back(kv.second.T_w_i.translation());
+    }
+    pangolin::glDrawLineStrip(vio_t_w_i);
+  }
 }
 
 // Load images, calibration, and features / matches if available
@@ -803,8 +833,20 @@ void load_data(const std::string& dataset_path, const std::string& calib_path) {
 
   DatasetIoInterfacePtr dataset_io =
       DatasetIoFactory::getDatasetIo(dataset_type);
-  dataset_io->read(imu_dataset_path);
+  dataset_io->read(dataset_path);
+  // Load the ground true pose data
+  for (size_t i = 0; i < dataset_io->get_data()->get_gt_pose_data().size();
+       i++) {
+    gt_t_ns.push_back(dataset_io->get_data()->get_gt_timestamps()[i]);
+    gt_t_w_i.push_back(
+        dataset_io->get_data()->get_gt_pose_data()[i].translation());
+  }
+  std::cout << "Successfully loaded ground-true data with size of "
+            << gt_t_w_i.size() << std::endl;
+  // Load the IMU raw measurement and perform calibration
   feed_imu(dataset_io, imu_data_queue, imu_timestamps, calib_accel, calib_gyro);
+  std::cout << "Successfully loaded IMU data with size of "
+            << imu_data_queue.size() << std::endl;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -815,73 +857,77 @@ void load_data(const std::string& dataset_path, const std::string& calib_path) {
 // until it returns false for automatic execution.
 bool next_step() {
   if (current_frame >= int(images.size()) / NUM_CAMS) return false;
-
   const Sophus::SE3d T_0_1 = calib_cam.T_i_c[0].inverse() * calib_cam.T_i_c[1];
-  const Vec3 accel_cov =
-      (calib_cam.accel_noise_std * std::sqrt(calib_cam.imu_update_rate))
-          .array()
-          .square();
+  if (use_imu) {
+    const Vec3 accel_cov =
+        (calib_cam.accel_noise_std * std::sqrt(calib_cam.imu_update_rate))
+            .array()
+            .square();
 
-  const Vec3 gyro_cov =
-      (calib_cam.gyro_noise_std * std::sqrt(calib_cam.imu_update_rate))
-          .array()
-          .square();
+    const Vec3 gyro_cov =
+        (calib_cam.gyro_noise_std * std::sqrt(calib_cam.imu_update_rate))
+            .array()
+            .square();
 
-  if (!initialized) {
-    data = imu_data_queue.front().second;
-    imu_data_queue.pop();
-
-    while (data->t_ns < timestamps[current_frame]) {
+    if (!initialized) {
       data = imu_data_queue.front().second;
       imu_data_queue.pop();
-      if (!data) break;
-      // std::cout << "Skipping IMU data.." << std::endl;
+
+      while (data->t_ns < timestamps[current_frame]) {
+        data = imu_data_queue.front().second;
+        imu_data_queue.pop();
+        if (!data) break;
+        // std::cout << "Skipping IMU data.." << std::endl;
+      }
+
+      using Vec3 = Eigen::Matrix<double, 3, 1>;
+
+      // Initialize the pose following the pipeline in basalt
+      Vec3 vel_w_i_init;
+      vel_w_i_init.setZero();
+      T_w_i_init.setQuaternion(Eigen::Quaternion<double>::FromTwoVectors(
+          data->accel, Vec3::UnitZ()));
+      last_state_t_ns = timestamps[current_frame];
+      imu_meas[last_state_t_ns] = IntegratedImuMeasurement<double>(
+          last_state_t_ns, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero());
+      PoseVelState<double> last_state;
+      last_state.T_w_i = T_w_i_init;
+      last_state.vel_w_i = vel_w_i_init;
+      frame_states[last_state_t_ns] = last_state;
+      //    states.emplace(std::make_pair(last_t_ns, last_state));
+      initialized = true;
+    } else {
+      Timestamp curr_frame = timestamps[current_frame];
+
+      imu_mea.reset(new IntegratedImuMeasurement<double>(
+          last_state_t_ns, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero()));
+      //    imu_mea.reset(new IntegratedImuMeasurement<double>(
+      //        last_t_ns, calib_cam.calib_gyro_bias.template head<3>(),
+      //        calib_cam.calib_accel_bias.template head<3>()));
+      while (data->t_ns <= last_state_t_ns) {
+        data = imu_data_queue.front().second;
+        imu_data_queue.pop();
+      }
+
+      while (data->t_ns <= curr_frame) {
+        imu_mea->integrate(*data, accel_cov, gyro_cov);
+        data = imu_data_queue.front().second;
+        imu_data_queue.pop();
+      }
+
+      PoseVelState<double> next_state = frame_states[last_state_t_ns];
+
+      imu_mea->predictState(next_state, constants::g, next_state);
+      imu_meas[curr_frame] = *imu_mea;
+      frame_states[curr_frame] = next_state;
+      //    std::cout << "Frame states size: " << frame_states.size() <<
+      //    std::endl; states.emplace(std::make_pair(curr_frame, next_state));
+      last_state_t_ns = curr_frame;
     }
-
-    using Vec3 = Eigen::Matrix<double, 3, 1>;
-
-    // Initialize the pose following the pipeline in basalt
-    Vec3 vel_w_i_init;
-    vel_w_i_init.setZero();
-    T_w_i_init.setQuaternion(
-        Eigen::Quaternion<double>::FromTwoVectors(data->accel, Vec3::UnitZ()));
-    last_state_t_ns = timestamps[current_frame];
-    imu_meas[last_state_t_ns] = IntegratedImuMeasurement<double>(
-        last_state_t_ns, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero());
-    PoseVelState<double> last_state;
-    last_state.T_w_i = T_w_i_init;
-    last_state.vel_w_i = vel_w_i_init;
-    frame_states[last_state_t_ns] = last_state;
-    //    states.emplace(std::make_pair(last_t_ns, last_state));
-    initialized = true;
   } else {
-    Timestamp curr_frame = timestamps[current_frame];
-
-    imu_mea.reset(new IntegratedImuMeasurement<double>(
-        last_state_t_ns, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero()));
-    //    imu_mea.reset(new IntegratedImuMeasurement<double>(
-    //        last_t_ns, calib_cam.calib_gyro_bias.template head<3>(),
-    //        calib_cam.calib_accel_bias.template head<3>()));
-    while (data->t_ns <= last_state_t_ns) {
-      data = imu_data_queue.front().second;
-      imu_data_queue.pop();
-    }
-
-    while (data->t_ns <= curr_frame) {
-      imu_mea->integrate(*data, accel_cov, gyro_cov);
-      data = imu_data_queue.front().second;
-      imu_data_queue.pop();
-    }
-
-    PoseVelState<double> next_state = frame_states[last_state_t_ns];
-
-    imu_mea->predictState(next_state, constants::g, next_state);
-    imu_meas[curr_frame] = *imu_mea;
-    frame_states[curr_frame] = next_state;
-    //    std::cout << "Frame states size: " << frame_states.size() <<
-    //    std::endl; states.emplace(std::make_pair(curr_frame, next_state));
-    last_state_t_ns = curr_frame;
+    // Do nothing here
   }
+
   if (take_keyframe) {
     take_keyframe = false;
 
@@ -947,8 +993,19 @@ bool next_step() {
     add_new_landmarks(fcidl, fcidr, kdl, kdr, calib_cam, md_stereo, md,
                       landmarks, next_landmark_id);
 
-    remove_old_keyframes(fcidl, max_num_kfs, cameras, landmarks, old_landmarks,
-                         kf_frames);
+    Camera removed_camera;
+    FrameId removed_fid;
+    bool removed = remove_old_keyframes(fcidl, max_num_kfs, cameras, landmarks,
+                                        old_landmarks, kf_frames,
+                                        removed_camera, removed_fid);
+
+    // Ducument the removed keyframe
+    if (removed) {
+      Sophus::SE3d T_w_i = removed_camera.T_w_c * calib_cam.T_i_c[0].inverse();
+      vio_t_ns.push_back(timestamps[removed_fid]);
+      vio_t_w_i.push_back(T_w_i.translation());
+    }
+
     optimize();
 
     current_pose = cameras[fcidl].T_w_c;
@@ -1006,7 +1063,38 @@ bool next_step() {
       landmarks = landmarks_opt;
       cameras = cameras_opt;
       calib_cam = calib_cam_opt;
-      update_frame_states_from_opt(frame_states, frame_states_opt);
+      if (use_imu) {
+        update_frame_states_from_opt(frame_states, frame_states_opt);
+      } else {
+        // Do nothing here
+      }
+
+      // Calculate the RMS ATE here
+      //      if (cameras.size() > 10) {
+      //        vio_t_ns.clear();
+      //        vio_t_w_i.clear();
+
+      //        for (const auto& kv : cameras) {
+      //          const FrameCamId& fcid = kv.first;
+      //          if (fcid.cam_id == 0) {  // only use the left camera
+      //            Sophus::SE3d T_w_i = kv.second.T_w_c *
+      //            calib_cam.T_i_c[0].inverse();
+      //            vio_t_ns.push_back(timestamps[fcid.frame_id]);
+      //            vio_t_w_i.push_back(T_w_i.translation());
+      //          }
+      //        }
+
+      //        double error = alignSVD(vio_t_ns, vio_t_w_i, gt_t_ns, gt_t_w_i);
+      //        errors.push_back(error);
+      //        // Calculate the avg. errors so far
+      //        double acc = 0;
+      //        for (size_t i = 0; i < errors.size(); i++) {
+      //          acc += errors[i];
+      //        }
+      //        std::cout << "The avg. error: " << acc / errors.size() <<
+      //        std::endl;
+      //      }
+
       opt_finished = false;
     }
 
@@ -1097,18 +1185,20 @@ void optimize() {
   calib_cam_opt = calib_cam;
   cameras_opt = cameras;
   landmarks_opt = landmarks;
-  get_frame_states_opt(frame_states, frame_states_opt);
+  if (use_imu) {
+    get_frame_states_opt(frame_states, frame_states_opt);
+  } else {
+    // Do nothing here
+  }
+
   opt_running = true;
 
   opt_thread.reset(new std::thread([fid, ba_options] {
     std::set<FrameCamId> fixed_cameras = {{fid, 0}, {fid, 1}};
 
-    std::vector<visnav::PoseVelState<double>>
-        states;  // placeholder: expected length is three
-    std::vector<visnav::IntegratedImuMeasurement<double>>
-        imu_measurements;  // placeholder: expected length is two
     bundle_adjustment(feature_corners, ba_options, fixed_cameras, calib_cam_opt,
-                      cameras_opt, landmarks_opt, frame_states_opt, imu_meas);
+                      cameras_opt, landmarks_opt, frame_states_opt, imu_meas,
+                      use_imu);
 
     opt_finished = true;
     opt_running = false;
@@ -1168,4 +1258,109 @@ void update_frame_states_from_opt(
   for (auto& it : frame_states_opt) {
     frame_states[it.first] = it.second;
   }
+}
+
+double alignSVD(
+    const std::vector<int64_t>& filter_t_ns,
+    const std::vector<Eigen::Vector3d,
+                      Eigen::aligned_allocator<Eigen::Vector3d>>& filter_t_w_i,
+    const std::vector<int64_t>& gt_t_ns,
+    std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>&
+        gt_t_w_i) {
+  std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>
+      est_associations;
+  std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>
+      gt_associations;
+
+  for (size_t i = 0; i < filter_t_w_i.size(); i++) {
+    int64_t t_ns = filter_t_ns[i];
+
+    size_t j;
+    for (j = 0; j < gt_t_ns.size(); j++) {
+      if (gt_t_ns.at(j) > t_ns) break;
+    }
+    j--;
+
+    if (j >= gt_t_ns.size() - 1) {
+      continue;
+    }
+
+    double dt_ns = t_ns - gt_t_ns.at(j);
+    double int_t_ns = gt_t_ns.at(j + 1) - gt_t_ns.at(j);
+
+    BASALT_ASSERT_STREAM(dt_ns >= 0, "dt_ns " << dt_ns);
+    BASALT_ASSERT_STREAM(int_t_ns > 0, "int_t_ns " << int_t_ns);
+
+    // Skip if the interval between gt larger than 100ms
+    if (int_t_ns > 1.1e8) continue;
+
+    double ratio = dt_ns / int_t_ns;
+
+    BASALT_ASSERT(ratio >= 0);
+    BASALT_ASSERT(ratio < 1);
+
+    Eigen::Vector3d gt = (1 - ratio) * gt_t_w_i[j] + ratio * gt_t_w_i[j + 1];
+
+    gt_associations.emplace_back(gt);
+    est_associations.emplace_back(filter_t_w_i[i]);
+  }
+
+  int num_kfs = est_associations.size();
+
+  Eigen::Matrix<double, 3, Eigen::Dynamic> gt, est;
+  gt.setZero(3, num_kfs);
+  est.setZero(3, num_kfs);
+
+  for (size_t i = 0; i < est_associations.size(); i++) {
+    gt.col(i) = gt_associations[i];
+    est.col(i) = est_associations[i];
+  }
+
+  Eigen::Vector3d mean_gt = gt.rowwise().mean();
+  Eigen::Vector3d mean_est = est.rowwise().mean();
+
+  gt.colwise() -= mean_gt;
+  est.colwise() -= mean_est;
+
+  Eigen::Matrix3d cov = gt * est.transpose();
+
+  Eigen::JacobiSVD<Eigen::Matrix3d> svd(
+      cov, Eigen::ComputeFullU | Eigen::ComputeFullV);
+
+  Eigen::Matrix3d S;
+  S.setIdentity();
+
+  if (svd.matrixU().determinant() * svd.matrixV().determinant() < 0)
+    S(2, 2) = -1;
+
+  Eigen::Matrix3d rot_gt_est = svd.matrixU() * S * svd.matrixV().transpose();
+  Eigen::Vector3d trans = mean_gt - rot_gt_est * mean_est;
+
+  Sophus::SE3d T_gt_est(rot_gt_est, trans);
+  Sophus::SE3d T_est_gt = T_gt_est.inverse();
+
+  for (size_t i = 0; i < gt_t_w_i.size(); i++) {
+    gt_t_w_i[i] = T_est_gt * gt_t_w_i[i];
+  }
+
+  double error = 0;
+  for (size_t i = 0; i < est_associations.size(); i++) {
+    est_associations[i] = T_gt_est * est_associations[i];
+    Eigen::Vector3d res = est_associations[i] - gt_associations[i];
+
+    error += res.transpose() * res;
+  }
+
+  error /= est_associations.size();
+  error = std::sqrt(error);
+
+  std::cout << "T_align\n" << T_gt_est.matrix() << std::endl;
+  std::cout << "error " << error << std::endl;
+  std::cout << "number of associations " << num_kfs << std::endl;
+
+  return error;
+}
+
+void align_svd() {
+  double error = alignSVD(vio_t_ns, vio_t_w_i, gt_t_ns, gt_t_w_i);
 }

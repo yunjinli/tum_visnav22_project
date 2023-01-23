@@ -30,6 +30,10 @@ class ImuDataset {
 
   virtual const std::vector<AccelData>& get_accel_data() const = 0;
   virtual const std::vector<GyroData>& get_gyro_data() const = 0;
+  virtual const std::vector<int64_t>& get_gt_timestamps() const = 0;
+  virtual const std::vector<Sophus::SE3d,
+                            Eigen::aligned_allocator<Sophus::SE3d>>&
+  get_gt_pose_data() const = 0;
   virtual int64_t get_mocap_to_imu_offset_ns() const = 0;
 
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -39,6 +43,9 @@ class EurocImuDataset : public ImuDataset {
   std::string path;
   std::vector<AccelData> accel_data;
   std::vector<GyroData> gyro_data;
+  std::vector<int64_t> gt_timestamps;  // ordered gt timestamps
+  std::vector<Sophus::SE3d, Eigen::aligned_allocator<Sophus::SE3d>>
+      gt_pose_data;
   int64_t mocap_to_imu_offset_ns = 0;
 
  public:
@@ -46,7 +53,13 @@ class EurocImuDataset : public ImuDataset {
 
   const std::vector<AccelData>& get_accel_data() const { return accel_data; }
   const std::vector<GyroData>& get_gyro_data() const { return gyro_data; }
-
+  const std::vector<int64_t>& get_gt_timestamps() const {
+    return gt_timestamps;
+  }
+  const std::vector<Sophus::SE3d, Eigen::aligned_allocator<Sophus::SE3d>>&
+  get_gt_pose_data() const {
+    return gt_pose_data;
+  }
   int64_t get_mocap_to_imu_offset_ns() const { return mocap_to_imu_offset_ns; }
 
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -79,7 +92,21 @@ class EurocIO : public DatasetIoInterface {
 
       data->path = path;
 
-      read_imu_data(path + "/mav0/imu0/");
+      read_imu_data(path + "/imu0/");
+
+      //      if (fs::exists(path + "/state_groundtruth_estimate0/data.csv")) {
+      //        read_gt_data_state(path + "/state_groundtruth_estimate0/");
+      //      } else if (fs::exists(path + "/gt/data.csv")) {
+      //        read_gt_data_pose(path + "/gt/");
+      //      }
+      std::ifstream gt_states(path + "/state_groundtruth_estimate0/data.csv",
+                              std::ios::binary);
+      std::ifstream gt_poses(path + "/gt/data.csv", std::ios::binary);
+      if (gt_states.is_open()) {
+        read_gt_data_state(path + "/state_groundtruth_estimate0/");
+      } else if (gt_poses.is_open()) {
+        read_gt_data_pose(path + "/gt/");
+      }
     }
   }
 
@@ -115,7 +142,55 @@ class EurocIO : public DatasetIoInterface {
       data->gyro_data.back().data = gyro;
     }
   }
+  void read_gt_data_state(const std::string& path) {
+    data->gt_timestamps.clear();
+    data->gt_pose_data.clear();
 
+    std::ifstream f(path + "data.csv");
+    std::string line;
+    while (std::getline(f, line)) {
+      if (line[0] == '#') continue;
+
+      std::stringstream ss(line);
+
+      char tmp;
+      uint64_t timestamp;
+      Eigen::Quaterniond q;
+      Eigen::Vector3d pos, vel, accel_bias, gyro_bias;
+
+      ss >> timestamp >> tmp >> pos[0] >> tmp >> pos[1] >> tmp >> pos[2] >>
+          tmp >> q.w() >> tmp >> q.x() >> tmp >> q.y() >> tmp >> q.z() >> tmp >>
+          vel[0] >> tmp >> vel[1] >> tmp >> vel[2] >> tmp >> accel_bias[0] >>
+          tmp >> accel_bias[1] >> tmp >> accel_bias[2] >> tmp >> gyro_bias[0] >>
+          tmp >> gyro_bias[1] >> tmp >> gyro_bias[2];
+
+      data->gt_timestamps.emplace_back(timestamp);
+      data->gt_pose_data.emplace_back(q, pos);
+    }
+  }
+  void read_gt_data_pose(const std::string& path) {
+    data->gt_timestamps.clear();
+    data->gt_pose_data.clear();
+
+    std::ifstream f(path + "data.csv");
+    std::string line;
+    while (std::getline(f, line)) {
+      if (line[0] == '#') continue;
+
+      std::stringstream ss(line);
+
+      char tmp;
+      uint64_t timestamp;
+      Eigen::Quaterniond q;
+      Eigen::Vector3d pos;
+
+      ss >> timestamp >> tmp >> pos[0] >> tmp >> pos[1] >> tmp >> pos[2] >>
+          tmp >> q.w() >> tmp >> q.x() >> tmp >> q.y() >> tmp >> q.z();
+
+      data->gt_timestamps.emplace_back(timestamp);
+      data->gt_pose_data.emplace_back(q, pos);
+    }
+  }
   std::shared_ptr<EurocImuDataset> data;
 };
 
