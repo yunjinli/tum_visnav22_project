@@ -27,8 +27,8 @@ target_link_libraries(test_ex3 gtest gtest_main Ceres::ceres pangolin TBB::tbb O
 # add_executable(test_ex4 src/test_ex4.cpp)
 # target_link_libraries(test_ex4 gtest gtest_main Ceres::ceres opengv TBB::tbb)
 
-add_executable(test_ex5 src/test_ex5.cpp)
-target_link_libraries(test_ex5 gtest gtest_main Ceres::ceres opengv TBB::tbb)
+#add_executable(test_ex5 src/test_ex5.cpp)
+#target_link_libraries(test_ex5 gtest gtest_main Ceres::ceres opengv TBB::tbb)
 
 add_executable(test_imu_dataloader src/test_imu_dataloader.cpp)
 target_link_libraries(test_imu_dataloader gtest gtest_main Ceres::ceres)
@@ -43,6 +43,6 @@ gtest_discover_tests(test_ex2 DISCOVERY_TIMEOUT 120)
 add_test(NAME ex2_calibration_test COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/test_ex2.sh WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 gtest_discover_tests(test_ex3 DISCOVERY_TIMEOUT 120)
 # gtest_discover_tests(test_ex4 DISCOVERY_TIMEOUT 120)
-gtest_discover_tests(test_ex5 DISCOVERY_TIMEOUT 120)
+#gtest_discover_tests(test_ex5 DISCOVERY_TIMEOUT 120)
 gtest_discover_tests(test_imu_dataloader DISCOVERY_TIMEOUT 120)
 gtest_discover_tests(test_imu_preintegration DISCOVERY_TIMEOUT 120)

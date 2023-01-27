@@ -306,12 +306,13 @@ void add_new_landmarks(const FrameCamId fcidl, const FrameCamId fcidr,
   }
 }
 
-void remove_old_keyframes(const FrameCamId fcidl, const int max_num_kfs,
+bool remove_old_keyframes(const FrameCamId fcidl, const int max_num_kfs,
                           Cameras& cameras, Landmarks& landmarks,
                           Landmarks& old_landmarks,
-                          std::set<FrameId>& kf_frames) {
+                          std::set<FrameId>& kf_frames, Camera& removed_camera,
+                          FrameId& removed_fid) {
   kf_frames.emplace(fcidl.frame_id);
-
+  bool removed = false;
   // TODO SHEET 5: Remove old cameras and observations if the number of keyframe
   // pairs (left and right image is a pair) is larger than max_num_kfs. The ids
   // of all the keyframes that are currently in the optimization should be
@@ -322,6 +323,9 @@ void remove_old_keyframes(const FrameCamId fcidl, const int max_num_kfs,
     auto kf_id = *kf_frames.begin();
     kf_frames.erase(kf_ptr);
     std::set<FrameCamId> removed_cameras = {{kf_id, 0}, {kf_id, 1}};
+    FrameCamId rfcid(kf_id, 0);
+    removed_camera = cameras.at(rfcid);
+    removed_fid = kf_id;
     for (auto& fcid : removed_cameras) {
       cameras.erase(fcid);
     }
@@ -330,6 +334,7 @@ void remove_old_keyframes(const FrameCamId fcidl, const int max_num_kfs,
         tid_lm.second.obs.erase(fcid);
       }
     }
+    removed = true;
   }
 
   for (auto& tid_lm : landmarks) {
@@ -340,5 +345,6 @@ void remove_old_keyframes(const FrameCamId fcidl, const int max_num_kfs,
       landmarks.erase(tid_lm.first);
     }
   }
+  return removed;
 }
 }  // namespace visnav
