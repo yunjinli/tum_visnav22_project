@@ -336,14 +336,18 @@ bool remove_old_keyframes(const FrameCamId fcidl, const int max_num_kfs,
     }
     removed = true;
   }
-
+  std::vector<TrackId> removed_lm_id;
   for (auto& tid_lm : landmarks) {
     if (tid_lm.second.obs.size() == 0) {
       TrackId old_tid = tid_lm.first;
       Landmark old_lm = tid_lm.second;
       old_landmarks.emplace(std::make_pair(old_tid, old_lm));
-      landmarks.erase(tid_lm.first);
+      removed_lm_id.push_back(tid_lm.first);
+      //      landmarks.erase(tid_lm.first);
     }
+  }
+  for (int i = 0; i < removed_lm_id.size(); i++) {
+    landmarks.erase(removed_lm_id[i]);
   }
   return removed;
 }

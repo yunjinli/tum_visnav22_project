@@ -100,7 +100,7 @@ double alignSVD(
     const std::vector<int64_t>& gt_t_ns,
     std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>&
         gt_t_w_i);
-void align_svd();
+double align_svd();
 ///////////////////////////////////////////////////////////////////////////////
 /// Constants
 ///////////////////////////////////////////////////////////////////////////////
@@ -420,10 +420,37 @@ int main(int argc, char** argv) {
     while (next_step()) {
       // nop
     }
-    align_svd();
-  }
+    double error = align_svd();
+    std::vector<std::string> errors;
+    std::string errors_log_name = "";
+    if (use_imu) {
+      errors_log_name += "VIO";
+    } else {
+      errors_log_name += "VO";
+    }
+    errors_log_name += "_MH05.txt";
+    std::ifstream errors_file(errors_log_name);
 
-  return 0;
+    while (errors_file) {
+      std::string line;
+      std::getline(errors_file, line);
+      if (!line.empty()) {
+        errors.push_back(line);
+      }
+    }
+
+    errors.push_back(std::to_string(error));
+    std::fstream file;
+    file.open(errors_log_name, std::ios::out | std::ios::binary);
+    for (int i = 0; i < errors.size(); i++) {
+      std::ostringstream s;
+      s << errors[i];
+      std::string str = s.str();
+      file << str << std::endl;
+    }
+
+    return 0;
+  }
 }
 
 // Visualize features and related info on top of the image views
@@ -757,9 +784,14 @@ void draw_scene() {
     glEnd();
   }
 
-  if (show_gt) pangolin::glDrawLineStrip(gt_t_w_i);
-
-  if (show_vio_pt) pangolin::glDrawLineStrip(vio_t_w_i);
+  if (show_gt) {
+    glColor3ubv(color_camera_current);
+    pangolin::glDrawLineStrip(gt_t_w_i);
+  }
+  if (show_vio_pt) {
+    glColor3ubv(color_selected_left);
+    pangolin::glDrawLineStrip(vio_t_w_i);
+  }
 }
 // Load images, calibration, and features / matches if available
 void load_data(const std::string& dataset_path, const std::string& calib_path) {
@@ -774,8 +806,8 @@ void load_data(const std::string& dataset_path, const std::string& calib_path) {
       std::string line;
       std::getline(times, line);
 
-      if (line.size() < 20 || line[0] == '#' || id > 2700) continue;
-
+      //      if (line.size() < 20 || line[0] == '#' || id > 2700) continue;
+      if (line.size() < 20 || line[0] == '#') continue;
       {
         std::string timestamp_str = line.substr(0, 19);
         std::istringstream ss(timestamp_str);
@@ -1350,10 +1382,16 @@ double alignSVD(
   std::cout << "T_align\n" << T_gt_est.matrix() << std::endl;
   std::cout << "error " << error << std::endl;
   std::cout << "number of associations " << num_kfs << std::endl;
-
   return error;
 }
 
-void align_svd() {
+double align_svd() {
+  for (auto& fid : kf_frames) {
+    FrameCamId temp_fcid(fid, 0);
+    vio_t_w_i.push_back(
+        (cameras.at(temp_fcid).T_w_c * calib_cam.T_i_c[0].inverse())
+            .translation());
+  }
   double error = alignSVD(vio_t_ns, vio_t_w_i, gt_t_ns, gt_t_w_i);
+  return error;
 }
