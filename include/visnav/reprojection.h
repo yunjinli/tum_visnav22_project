@@ -32,13 +32,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #pragma once
 
-#include <memory>
-
-#include <Eigen/Dense>
-#include <sophus/se3.hpp>
-
 #include <visnav/common_types.h>
 #include <visnav/imu/preintegration.h>
+
+#include <Eigen/Dense>
+#include <memory>
+#include <sophus/se3.hpp>
 
 namespace visnav {
 
@@ -112,13 +111,14 @@ struct BundleAdjustmentImuCostFunctor {
   BundleAdjustmentImuCostFunctor(
       //      const IntegratedImuMeasurement<double>& imu_meas,
       const PoseVelState<double>& delta_state, const Eigen::Vector3d& g,
-      const Timestamp& state0_t_ns,
-      const Timestamp& state1_t_ns)  // might have to use int_64t if this breaks
-                                     //      : imu_meas(imu_meas),
+      const Timestamp& state0_t_ns, const Timestamp& state1_t_ns,
+      const Sophus::SE3d T_i_c)  // might have to use int_64t if this breaks
+                                 //      : imu_meas(imu_meas),
       : delta_state_(delta_state),
         g(g),
         state0_t_ns(state0_t_ns),
-        state1_t_ns(state1_t_ns) {}
+        state1_t_ns(state1_t_ns),
+        T_c_i(T_i_c.inverse()) {}
 
   template <class T>
   bool operator()(T const* const sstate0_T_w_i, T const* const sstate1_T_w_i,
@@ -130,6 +130,8 @@ struct BundleAdjustmentImuCostFunctor {
     Eigen::Map<Eigen::Matrix<T, 3, 1> const> const state0_v_w_i(sstate0_v_w_i);
     Eigen::Map<Eigen::Matrix<T, 3, 1> const> const state1_v_w_i(sstate1_v_w_i);
     Eigen::Map<Eigen::Matrix<T, POSE_VEL_SIZE, 1>> residuals(sResiduals);
+    // state0_T_w_i = state0_T_w_i * T_c_i;
+    // state1_T_w_i = state1_T_w_i * T_c_i;
     // Rebuild the state variables
     //    PoseVelState<T> state0(state0_t_ns, state0_T_w_i, state0_v_w_i);
     //    state0.T_w_i = state0_T_w_i;
@@ -152,15 +154,15 @@ struct BundleAdjustmentImuCostFunctor {
     double dt = delta_state_.t_ns * (1e-9);
     //    VecN res;
 
-    Mat3 R0_inv = state0_T_w_i.so3().inverse().matrix();
-    Vec3 tmp =
-        R0_inv * (state1_T_w_i.translation() - state0_T_w_i.translation() -
-                  state0_v_w_i * dt - (0.5) * g * dt * dt);
+    Mat3 R0_inv = (state0_T_w_i * T_c_i).so3().inverse().matrix();
+    Vec3 tmp = R0_inv * ((state1_T_w_i * T_c_i).translation() -
+                         (state0_T_w_i * T_c_i).translation() -
+                         state0_v_w_i * dt - (0.5) * g * dt * dt);
 
     residuals.template segment<3>(0) = tmp - (delta_state_.T_w_i.translation());
     residuals.template segment<3>(3) =
-        (delta_state_.T_w_i.so3() * state1_T_w_i.so3().inverse() *
-         state0_T_w_i.so3())
+        (delta_state_.T_w_i.so3() * (state1_T_w_i * T_c_i).so3().inverse() *
+         (state0_T_w_i * T_c_i).so3())
             .log();
 
     Vec3 tmp2 = R0_inv * (state1_v_w_i - state0_v_w_i - g * dt);
@@ -172,5 +174,6 @@ struct BundleAdjustmentImuCostFunctor {
   Eigen::Vector3d g;
   //  IntegratedImuMeasurement<double> imu_meas;
   PoseVelState<double> delta_state_;
+  Sophus::SE3d T_c_i;
 };
 }  // namespace visnav
