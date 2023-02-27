@@ -32,20 +32,18 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #pragma once
 
-#include <bitset>
-#include <cstdint>
-#include <map>
-#include <unordered_map>
-#include <vector>
-
 #include <tbb/concurrent_unordered_map.h>
 #include <tbb/concurrent_vector.h>
+#include <visnav/hash.h>
 
 #include <Eigen/Core>
 #include <Eigen/StdVector>
+#include <bitset>
+#include <cstdint>
+#include <map>
 #include <sophus/se3.hpp>
-
-#include <visnav/hash.h>
+#include <unordered_map>
+#include <vector>
 
 #define UNUSED(x) (void)(x)
 
@@ -172,7 +170,6 @@ using FeatureTracks = std::unordered_map<TrackId, FeatureTrack>;
 struct Camera {
   /// camera pose (transforms from camera to world)
   Sophus::SE3d T_w_c;
-
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
 

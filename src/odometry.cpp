@@ -30,45 +30,38 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include <algorithm>
-#include <atomic>
-#include <chrono>
-#include <iostream>
-#include <sstream>
-#include <thread>
-
-#include <sophus/se3.hpp>
-
-#include <tbb/concurrent_unordered_map.h>
-
 #include <pangolin/display/image_view.h>
 #include <pangolin/gl/gldraw.h>
 #include <pangolin/image/image.h>
 #include <pangolin/image/image_io.h>
 #include <pangolin/image/typed_image.h>
 #include <pangolin/pangolin.h>
-
-#include <CLI/CLI.hpp>
-
-#include <visnav/common_types.h>
-
+#include <tbb/concurrent_unordered_map.h>
 #include <visnav/calibration.h>
-
+#include <visnav/common_types.h>
+#include <visnav/gui_helper.h>
+#include <visnav/imu/preintegration.h>
+#include <visnav/imu/utils/assert.h>
+#include <visnav/imu_dataset.h>
 #include <visnav/keypoints.h>
 #include <visnav/map_utils.h>
 #include <visnav/matching_utils.h>
+#include <visnav/serialization.h>
+#include <visnav/tracks.h>
 #include <visnav/vo_utils.h>
 
-#include <visnav/gui_helper.h>
-#include <visnav/tracks.h>
-
-#include <visnav/serialization.h>
-#include <visnav/imu/preintegration.h>
+#include <CLI/CLI.hpp>
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <iostream>
 #include <queue>
-#include "../include/visnav/imu/utils/calib_bias.hpp"
-#include <visnav/imu_dataset.h>
+#include <sophus/se3.hpp>
+#include <sstream>
+#include <thread>
+
 #include "../include/visnav/imu/imu_types.h"
-#include <visnav/imu/utils/assert.h>
+#include "../include/visnav/imu/utils/calib_bias.hpp"
 using namespace visnav;
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -143,6 +136,11 @@ Matches feature_matches;
 /// camera poses in the current map
 Cameras cameras;
 
+/// latest frames in the map (default size: 3)
+int num_latest_frames = 3;
+Cameras recent_cameras;
+std::vector<FrameCamId> removed_fcid_buffer;
+
 /// copy of cameras for optimization in parallel thread
 Cameras cameras_opt;
 
@@ -163,6 +161,7 @@ ImageProjections image_projections;
 /// IMU measurements
 Eigen::aligned_map<Timestamp, IntegratedImuMeasurement<double>> imu_meas;
 Eigen::aligned_map<Timestamp, PoseVelState<double>> frame_states;
+// Eigen::aligned_map<Timestamp, PoseVelState<double>> frame_states_opt;
 Eigen::aligned_map<Timestamp, PoseVelState<double>> frame_states_opt;
 Sophus::SE3d T_w_i_init;
 bool initialized = false;
@@ -274,8 +273,8 @@ Button alignSVD_btn("ui.align_svd", &align_svd);
 // process everything in non-gui mode).
 int main(int argc, char** argv) {
   bool show_gui = true;
-  std::string dataset_path = "data/V1_01_easy/mav0";
-  std::string cam_calib = "opt_calib.json";
+  std::string dataset_path = "../data/euro_data/MH_01_easy/mav0/";
+  std::string cam_calib = "euroc_ds_calib_visnav_type.json";
   CLI::App app{"Visual odometry."};
 
   app.add_option("--show-gui", show_gui, "Show GUI");
@@ -428,7 +427,7 @@ int main(int argc, char** argv) {
     } else {
       errors_log_name += "VO";
     }
-    errors_log_name += "_MH05.txt";
+    errors_log_name += "_MH03.txt";
     std::ifstream errors_file(errors_log_name);
 
     while (errors_file) {
@@ -1078,6 +1077,41 @@ bool next_step() {
 
     current_pose = md.T_w_c;
 
+    if (use_imu) {
+      recent_cameras[fcidl].T_w_c = current_pose;
+
+      for (auto& kv : md.inliers) {  // In this frame
+        const FeatureId& f_id = kv.first;
+        const TrackId& t_id = kv.second;
+        if (landmarks.count(t_id) > 0)  // landmark exists
+        {
+          landmarks.at(t_id).obs.emplace(std::make_pair(fcidl, f_id));
+        } else {
+          // nop
+        }
+      }
+      if (recent_cameras.size() > num_latest_frames) {
+        FrameId oldest_frame = 1000000;
+        FrameCamId remove_fcid;
+        for (const auto& kv : recent_cameras) {
+          if (kv.first.frame_id < oldest_frame) {
+            oldest_frame = kv.first.frame_id;
+            remove_fcid = kv.first;
+          } else {
+            // nop
+          }
+        }
+        // remove the oldest frames
+        recent_cameras.erase(remove_fcid);
+        removed_fcid_buffer.push_back(remove_fcid);
+        for (auto& tid_lm : landmarks) {
+          if (!cameras.count(remove_fcid)) {
+            tid_lm.second.obs.erase(remove_fcid);
+          }
+        }
+      }
+    }
+
     if (int(md.inliers.size()) < new_kf_min_inliers && !opt_running &&
         !opt_finished) {
       take_keyframe = true;
@@ -1086,6 +1120,15 @@ bool next_step() {
     if (!opt_running && opt_finished) {
       opt_thread->join();
       landmarks = landmarks_opt;
+      // remove observation from the landmarks
+      for (const auto& rfcid : removed_fcid_buffer) {
+        for (auto& tid_lm : landmarks) {
+          if (!cameras.count(rfcid)) {
+            tid_lm.second.obs.erase(rfcid);
+          }
+        }
+      }
+      removed_fcid_buffer.clear();
       cameras = cameras_opt;
       calib_cam = calib_cam_opt;
       if (use_imu) {
@@ -1093,32 +1136,6 @@ bool next_step() {
       } else {
         // Do nothing here
       }
-
-      // Calculate the RMS ATE here
-      //      if (cameras.size() > 10) {
-      //        vio_t_ns.clear();
-      //        vio_t_w_i.clear();
-
-      //        for (const auto& kv : cameras) {
-      //          const FrameCamId& fcid = kv.first;
-      //          if (fcid.cam_id == 0) {  // only use the left camera
-      //            Sophus::SE3d T_w_i = kv.second.T_w_c *
-      //            calib_cam.T_i_c[0].inverse();
-      //            vio_t_ns.push_back(timestamps[fcid.frame_id]);
-      //            vio_t_w_i.push_back(T_w_i.translation());
-      //          }
-      //        }
-
-      //        double error = alignSVD(vio_t_ns, vio_t_w_i, gt_t_ns,
-      //        gt_t_w_i); errors.push_back(error);
-      //        // Calculate the avg. errors so far
-      //        double acc = 0;
-      //        for (size_t i = 0; i < errors.size(); i++) {
-      //          acc += errors[i];
-      //        }
-      //        std::cout << "The avg. error: " << acc / errors.size() <<
-      //        std::endl;
-      //      }
 
       opt_finished = false;
     }
@@ -1145,19 +1162,21 @@ void compute_projections() {
       const Eigen::Vector2d p_2d_corner =
           feature_corners.at(fcid).corners[kv_obs.second];
 
-      const Eigen::Vector3d p_c =
-          cameras.at(fcid).T_w_c.inverse() * kv_lm.second.p;
-      const Eigen::Vector2d p_2d_repoj =
-          calib_cam.intrinsics.at(fcid.cam_id)->project(p_c);
+      if (cameras.count(fcid)) {
+        const Eigen::Vector3d p_c =
+            cameras.at(fcid).T_w_c.inverse() * kv_lm.second.p;
+        const Eigen::Vector2d p_2d_repoj =
+            calib_cam.intrinsics.at(fcid.cam_id)->project(p_c);
 
-      ProjectedLandmarkPtr proj_lm(new ProjectedLandmark);
-      proj_lm->track_id = track_id;
-      proj_lm->point_measured = p_2d_corner;
-      proj_lm->point_reprojected = p_2d_repoj;
-      proj_lm->point_3d_c = p_c;
-      proj_lm->reprojection_error = (p_2d_corner - p_2d_repoj).norm();
+        ProjectedLandmarkPtr proj_lm(new ProjectedLandmark);
+        proj_lm->track_id = track_id;
+        proj_lm->point_measured = p_2d_corner;
+        proj_lm->point_reprojected = p_2d_repoj;
+        proj_lm->point_3d_c = p_c;
+        proj_lm->reprojection_error = (p_2d_corner - p_2d_repoj).norm();
 
-      image_projections[fcid].obs.push_back(proj_lm);
+        image_projections[fcid].obs.push_back(proj_lm);
+      }
     }
 
     for (const auto& kv_obs : kv_lm.second.outlier_obs) {
@@ -1165,19 +1184,21 @@ void compute_projections() {
       const Eigen::Vector2d p_2d_corner =
           feature_corners.at(fcid).corners[kv_obs.second];
 
-      const Eigen::Vector3d p_c =
-          cameras.at(fcid).T_w_c.inverse() * kv_lm.second.p;
-      const Eigen::Vector2d p_2d_repoj =
-          calib_cam.intrinsics.at(fcid.cam_id)->project(p_c);
+      if (cameras.count(fcid)) {
+        const Eigen::Vector3d p_c =
+            cameras.at(fcid).T_w_c.inverse() * kv_lm.second.p;
+        const Eigen::Vector2d p_2d_repoj =
+            calib_cam.intrinsics.at(fcid.cam_id)->project(p_c);
 
-      ProjectedLandmarkPtr proj_lm(new ProjectedLandmark);
-      proj_lm->track_id = track_id;
-      proj_lm->point_measured = p_2d_corner;
-      proj_lm->point_reprojected = p_2d_repoj;
-      proj_lm->point_3d_c = p_c;
-      proj_lm->reprojection_error = (p_2d_corner - p_2d_repoj).norm();
+        ProjectedLandmarkPtr proj_lm(new ProjectedLandmark);
+        proj_lm->track_id = track_id;
+        proj_lm->point_measured = p_2d_corner;
+        proj_lm->point_reprojected = p_2d_repoj;
+        proj_lm->point_3d_c = p_c;
+        proj_lm->reprojection_error = (p_2d_corner - p_2d_repoj).norm();
 
-      image_projections[fcid].outlier_obs.push_back(proj_lm);
+        image_projections[fcid].outlier_obs.push_back(proj_lm);
+      }
     }
   }
 }
@@ -1223,7 +1244,7 @@ void optimize() {
 
     bundle_adjustment(feature_corners, ba_options, fixed_cameras, calib_cam_opt,
                       cameras_opt, landmarks_opt, frame_states_opt, imu_meas,
-                      use_imu);
+                      use_imu, timestamps);
 
     opt_finished = true;
     opt_running = false;
@@ -1258,22 +1279,34 @@ void get_frame_states_opt(
   //    auto kf_id = *it;
   //    frame_states_opt[timestamps[kf_id]] = frame_states[timestamps[kf_id]];
   //  }
-  int iter_counter = 0;
-  auto iter = frame_states.rbegin();
-  while (iter_counter < 3) {
-    //    std::cout << iter->first << std::endl;
-    //    if (iter_counter == 0) {
-    //      ASSERT_EQ(iter->first, 1403636763853555456);
-    //    }
-    //    if (iter_counter == 1) {
-    //      ASSERT_EQ(iter->first, 1403636763848555520);
-    //    }
-    //    if (iter_counter == 2) {
-    //      ASSERT_EQ(iter->first, 1403636763843555584);
-    //    }
-    frame_states_opt[iter->first] = iter->second;
-    ++iter;
-    iter_counter++;
+  // int iter_counter = 0;
+  // auto iter = frame_states.rbegin();
+
+  // while (iter_counter < 3) {
+  //   //    std::cout << iter->first << std::endl;
+  //   //    if (iter_counter == 0) {
+  //   //      ASSERT_EQ(iter->first, 1403636763853555456);
+  //   //    }
+  //   //    if (iter_counter == 1) {
+  //   //      ASSERT_EQ(iter->first, 1403636763848555520);
+  //   //    }
+  //   //    if (iter_counter == 2) {
+  //   //      ASSERT_EQ(iter->first, 1403636763843555584);
+  //   //    }
+  //   frame_states_opt[iter->first] = iter->second;
+  //   ++iter;
+  //   iter_counter++;
+  // }
+  for (const auto& kv : recent_cameras) {
+    PoseVelState<double> frame_state;
+    frame_state.T_w_i =
+        kv.second.T_w_c;  // here we load T_w_c, we will do later transformation
+                          // in the cost functor
+    frame_state.vel_w_i = frame_states[timestamps[kv.first.frame_id]].vel_w_i;
+    frame_state.t_ns = timestamps[kv.first.frame_id];
+    // frame_states_opt.emplace(
+    //     std::make_pair(timestamps[kv.first.frame_id], frame_state));
+    frame_states_opt[timestamps[kv.first.frame_id]] = frame_state;
   }
 }
 
@@ -1282,6 +1315,8 @@ void update_frame_states_from_opt(
     Eigen::aligned_map<Timestamp, PoseVelState<double>>& frame_states_opt) {
   for (auto& it : frame_states_opt) {
     frame_states[it.first] = it.second;
+    frame_states[it.first].T_w_i =
+        frame_states[it.first].T_w_i * calib_cam.T_i_c[0].inverse();
   }
 }
 

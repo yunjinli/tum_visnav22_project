@@ -32,26 +32,22 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #pragma once
 
-#include <fstream>
-#include <thread>
-
 #include <ceres/ceres.h>
+#include <visnav/common_types.h>
+#include <visnav/imu/preintegration.h>
+#include <visnav/reprojection.h>
+#include <visnav/serialization.h>
+#include <visnav/tracks.h>
 
+#include <fstream>
 #include <opengv/absolute_pose/CentralAbsoluteAdapter.hpp>
 #include <opengv/absolute_pose/methods.hpp>
 #include <opengv/relative_pose/CentralRelativeAdapter.hpp>
 #include <opengv/sac/Ransac.hpp>
 #include <opengv/sac_problems/absolute_pose/AbsolutePoseSacProblem.hpp>
 #include <opengv/triangulation/methods.hpp>
-
-#include <visnav/common_types.h>
-#include <visnav/serialization.h>
-
-#include <visnav/reprojection.h>
+#include <thread>
 #include <visnav/local_parameterization_se3.hpp>
-#include <visnav/imu/preintegration.h>
-
-#include <visnav/tracks.h>
 
 namespace visnav {
 
@@ -343,7 +339,7 @@ void bundle_adjustment(
     Eigen::aligned_map<Timestamp, PoseVelState<double>>& states,
     Eigen::aligned_map<Timestamp, IntegratedImuMeasurement<double>>&
         imu_measurements,
-    bool use_imu) {
+    bool use_imu, std::vector<Timestamp>& timestamps) {
   ceres::Problem problem;
 
   // TODO SHEET 4: Setup optimization problem
@@ -371,6 +367,14 @@ void bundle_adjustment(
     }
   }
 
+  if (use_imu) {
+    for (auto& kv : states) {
+      problem.AddParameterBlock(kv.second.T_w_i.data(),
+                                Sophus::SE3d::num_parameters,
+                                new Sophus::test::LocalParameterizationSE3);
+    }
+  }
+
   for (auto& kv : landmarks) {
     const auto& t_id = kv.first;
     auto& lm = kv.second;
@@ -387,14 +391,31 @@ void bundle_adjustment(
           Sophus::SE3d::num_parameters, 3, 8>(c);
 
       if (options.use_huber) {
-        problem.AddResidualBlock(cost_function,
-                                 new ceres::HuberLoss(options.huber_parameter),
-                                 cameras.at(fcid).T_w_c.data(), p_3d.data(),
-                                 calib_cam.intrinsics[fcid.cam_id]->data());
+        if (cameras.count(fcid)) {
+          problem.AddResidualBlock(
+              cost_function, new ceres::HuberLoss(options.huber_parameter),
+              cameras.at(fcid).T_w_c.data(), p_3d.data(),
+              calib_cam.intrinsics[fcid.cam_id]->data());
+        } else {
+          problem.AddResidualBlock(
+              cost_function, new ceres::HuberLoss(options.huber_parameter),
+              // states[timestamps[fcid.frame_id]].T_w_i.data(), p_3d.data(),
+              states.at(timestamps[fcid.frame_id]).T_w_i.data(), p_3d.data(),
+              calib_cam.intrinsics[fcid.cam_id]->data());
+        }
+
       } else {
-        problem.AddResidualBlock(cost_function, NULL,
-                                 cameras.at(fcid).T_w_c.data(), p_3d.data(),
-                                 calib_cam.intrinsics[fcid.cam_id]->data());
+        if (cameras.count(fcid)) {
+          problem.AddResidualBlock(cost_function, NULL,
+                                   cameras.at(fcid).T_w_c.data(), p_3d.data(),
+                                   calib_cam.intrinsics[fcid.cam_id]->data());
+        } else {
+          problem.AddResidualBlock(
+              cost_function, NULL,
+              // states[timestamps[fcid.frame_id]].T_w_i.data(), p_3d.data(),
+              states.at(timestamps[fcid.frame_id]).T_w_i.data(), p_3d.data(),
+              calib_cam.intrinsics[fcid.cam_id]->data());
+        }
       }
     }
   }
@@ -402,16 +423,17 @@ void bundle_adjustment(
   if (use_imu) {
     // Add the parameter block first
     if (states.size() == 3) {
-      for (auto& state : states) {
-        problem.AddParameterBlock(state.second.T_w_i.data(),
-                                  Sophus::SE3d::num_parameters,
-                                  new Sophus::test::LocalParameterizationSE3);
-      }
+      // for (auto& state : states) {
+      //   problem.AddParameterBlock(state.second.T_w_i.data(),
+      //                             Sophus::SE3d::num_parameters,
+      //                             new
+      //                             Sophus::test::LocalParameterizationSE3);
+      // }
       // Build the two residuals for the frames
       int iter_counter = 0;
       auto iter = states.rbegin();
 
-      while (iter_counter < 3) {
+      while (iter_counter < 2) {
         const IntegratedImuMeasurement<double>& imu_meas =
             imu_measurements[iter->first];
         visnav::PoseVelState<double>& state1 = states[iter->first];
@@ -430,9 +452,9 @@ void bundle_adjustment(
         // might have to add state[1] twice, because it appears in two residuals
 
         BundleAdjustmentImuCostFunctor* imu_c =
-            new BundleAdjustmentImuCostFunctor(imu_meas.getDeltaState(),
-                                               visnav::constants::g,
-                                               state0.t_ns, state1.t_ns);
+            new BundleAdjustmentImuCostFunctor(
+                imu_meas.getDeltaState(), visnav::constants::g, state0.t_ns,
+                state1.t_ns, calib_cam.T_i_c[0]);
         ceres::CostFunction* imu_cost_function =
             new ceres::AutoDiffCostFunction<
                 BundleAdjustmentImuCostFunctor, 9,
