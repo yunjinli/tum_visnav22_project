@@ -17,19 +17,19 @@ cd tum_visnav22_project
 ```
 mkdir build
 cd build
-cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo .
+cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
 ```
 
 ## Run
 
-### Run Visial-Inertial Odometry (Ours)
+### Run Visual-Inertial Odometry (Ours)
 
 ```
 cd build
 ./odometry --dataset-path ../data/euro_data/MH_05_difficult/mav0/ --cam-calib ../euroc_ds_calib_visnav_type.json --use-imu true
 ```
 
-### Run Visial Odometry (Baseline)
+### Run Visual Odometry (Baseline)
 
 ```
 cd build
