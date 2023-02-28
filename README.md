@@ -1,20 +1,47 @@
-## Vision-based Navigation
+## Visual-Inertial Tracking using Preintegrated Factors
 
-This code is a part of the practical course "Vision-based Navigation" (IN2106) taught at the Technical University of Munich.
+This project is built upon part of the code in practical course "Vision-based Navigation" (IN2106) taught at the Technical University of Munich.
 
-It was originally developed for the winter term 2018. The latest iteration is winter term 2021.
+## Setup
 
-The authors are Vladyslav Usenko, Nikolaus Demmel, David Schubert and Zhakshylyk Nurlanov.
+```
+git clone --recursive https://github.com/yunjinli/tum_visnav22_project.git
+```
 
-### License
+```
+cd tum_visnav22_project
+./install_dependencies.sh
+./build_submodules.sh
+```
 
-The code for this practical course is provided under a BSD 3-clause license. See the LICENSE file for details.
+```
+mkdir build
+cd build
+cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo .
+```
 
-Parts of the code (`include/tracks.h`, `include/union_find.h`) are adapted from OpenMVG and distributed under an MPL 2.0 licence.
+## Run
 
-Parts of the code (`include/local_parameterization_se3.hpp`, `src/test_ceres_se3.cpp`) are adapted from Sophus and distributed under an MIT license.
+### Run Visial-Inertial Odometry (Ours)
 
-Note also the different licenses of thirdparty submodules.
+```
+cd build
+./odometry --dataset-path ../data/euro_data/MH_05_difficult/mav0/ --cam-calib ../euroc_ds_calib_visnav_type.json --use-imu true
+```
 
+### Run Visial Odometry (Baseline)
 
-You can find [setup instructions here.](wiki/Setup.md)
+```
+cd build
+./odometry --dataset-path ../data/euro_data/MH_05_difficult/mav0/ --cam-calib ../euroc_ds_calib_visnav_type.json --use-imu false
+```
+
+## Demo
+
+### Machine Hall 04 - VO vs. VIO
+
+[![MH04](https://img.youtube.com/vi/aNgcuXywrX4/0.jpg)](https://youtu.be/aNgcuXywrX4)
+
+### Machine Hall 05 - VO vs. VIO
+
+[![MH05](https://img.youtube.com/vi/fA9gDHygKfg/0.jpg)](https://youtu.be/fA9gDHygKfg)
