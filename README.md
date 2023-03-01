@@ -1,6 +1,6 @@
 ## Visual-Inertial Tracking using Preintegrated Factors
 
-This project is built upon part of the code in practical course "Vision-based Navigation" (IN2106) taught at the Technical University of Munich.
+This project is built upon part of the code in practical course "Vision-based Navigation" (IN2106) taught at the Technical University of Munich. For more detials, please refer to the [report](VisNav_VIO_Project_w0034_w0035.pdf).
 
 ## Setup
 
